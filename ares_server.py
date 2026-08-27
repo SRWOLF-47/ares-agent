@@ -116,7 +116,7 @@ async def home():
                 e.preventDefault();
                 const prompt = document.getElementById('promptInput').value;
                 
-                statusDiv.innerText = "Procesando respuesta y generando voz...";
+                statusDiv.innerText = "Procesando orden con ARES...";
                 sendBtn.disabled = true;
 
                 try {
@@ -139,7 +139,7 @@ async def home():
                     
                     statusDiv.innerText = "ARES respondiendo...";
                 } catch (err) {
-                    statusDiv.innerText = "Error al conectar con ARES.";
+                    statusDiv.innerText = "Error al conectar con el servidor.";
                 } finally {
                     sendBtn.disabled = false;
                 }
@@ -153,8 +153,9 @@ async def home():
 @app.post("/preguntar")
 async def preguntar(prompt: str = Form(...)):
     try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
+        # Uso asíncrono directo con gemini-1.5-flash
+        response = await client.aio.models.generate_content(
+            model="gemini-1.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION
@@ -171,3 +172,4 @@ async def preguntar(prompt: str = Form(...)):
     await texto_a_voz(texto_respuesta, ruta_audio)
     
     return FileResponse(ruta_audio, media_type="audio/mpeg", filename="respuesta_ares.mp3")
+    

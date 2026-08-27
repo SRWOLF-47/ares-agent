@@ -1,0 +1,5 @@
+google-genai
+edge-tts
+fastapi
+uvicorn
+python-multipart

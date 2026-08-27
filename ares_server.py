@@ -90,19 +90,61 @@ async def home():
                 transition: transform 0.2s, opacity 0.2s;
             }
             button:active { transform: scale(0.98); }
-            .status { margin-top: 20px; color: #8b949e; font-size: 14px; display: none; }
+            .status { margin-top: 20px; color: #8b949e; font-size: 14px; }
+            audio { margin-top: 20px; width: 100%; display: none; }
         </style>
     </head>
     <body>
         <div class="container">
             <h1>ARES SYSTEM</h1>
             <p class="subtitle">AUTOMATED RESPONSE & EXECUTIVE SYSTEM</p>
-            <form action="/preguntar" method="post" onsubmit="document.getElementById('status').style.display='block';">
-                <textarea name="prompt" placeholder="Ingrese su comando, Señor..." required></textarea>
-                <button type="submit">TRANSMITIR COMANDO</button>
+            <form id="aresForm">
+                <textarea id="promptInput" name="prompt" placeholder="Ingrese su comando, Señor..." required></textarea>
+                <button type="submit" id="sendBtn">TRANSMITIR COMANDO</button>
             </form>
-            <div id="status" class="status">Procesando orden en los servidores...</div>
+            <div id="status" class="status">Sistemas en espera...</div>
+            <audio id="audioPlayer" controls></audio>
         </div>
+
+        <script>
+            const form = document.getElementById('aresForm');
+            const statusDiv = document.getElementById('status');
+            const audioPlayer = document.getElementById('audioPlayer');
+            const sendBtn = document.getElementById('sendBtn');
+
+            form.addEventListener('submit', async (e) => {
+                e.preventDefault();
+                const prompt = document.getElementById('promptInput').value;
+                
+                statusDiv.innerText = "Procesando respuesta y generando voz...";
+                sendBtn.disabled = true;
+
+                try {
+                    const formData = new FormData();
+                    formData.append('prompt', prompt);
+
+                    const response = await fetch('/preguntar', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (!response.ok) throw new Error("Error en la transmisión");
+
+                    const blob = await response.blob();
+                    const audioUrl = URL.createObjectURL(blob);
+                    
+                    audioPlayer.src = audioUrl;
+                    audioPlayer.style.display = 'block';
+                    audioPlayer.play();
+                    
+                    statusDiv.innerText = "ARES respondiendo...";
+                } catch (err) {
+                    statusDiv.innerText = "Error al conectar con ARES.";
+                } finally {
+                    sendBtn.disabled = false;
+                }
+            });
+        </script>
     </body>
     </html>
     """
@@ -112,7 +154,7 @@ async def home():
 async def preguntar(prompt: str = Form(...)):
     try:
         response = client.models.generate_content(
-            model="gemini-1.5-flash",
+            model="gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION

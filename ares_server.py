@@ -19,36 +19,43 @@ SYSTEM_INSTRUCTION = (
     "de un asistente personal ejecutivo (estilo JARVIS). Evita emojis o caracteres especiales."
 )
 
+# Lista de modelos a intentar en orden de preferencia
+MODELOS_TENTATIVOS = [
+    "gemini-2.5-flash",
+    "gemini-1.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-pro",
+    "gemini-pro"
+]
+
 def consultar_gemini(prompt: str) -> str:
-    """Consulta directa a la API oficial de Gemini sin SDKs intermedios."""
+    """Consulta directa a la API oficial de Gemini probando versiones v1beta y v1 automáticamente."""
     if not GEMINI_API_KEY:
         return "Señor, no detecto la clave de acceso API en las variables de entorno de Render."
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
-    
+    headers = {"Content-Type": "application/json"}
     payload = {
         "system_instruction": {
             "parts": [{"text": SYSTEM_INSTRUCTION}]
         },
         "contents": [
-            {
-                "parts": [{"text": prompt}]
-            }
+            {"parts": [{"text": prompt}]}
         ]
     }
-    
-    headers = {"Content-Type": "application/json"}
 
-    try:
-        response = requests.post(url, json=payload, headers=headers, timeout=20)
-        
-        if response.status_code == 200:
-            data = response.json()
-            return data["candidates"][0]["content"]["parts"][0]["text"]
-        else:
-            return f"Señor, la API devolvió el código de estado {response.status_code}. Por favor verifique la clave API en Render."
-    except Exception as e:
-        return f"Señor, ocurrió una anomalía en la conexión: {str(e)}"
+    # Recorremos los modelos y versiones de API hasta que uno funcione
+    for version_api in ["v1beta", "v1"]:
+        for modelo in MODELOS_TENTATIVOS:
+            url = f"https://generativelanguage.googleapis.com/{version_api}/models/{modelo}:generateContent?key={GEMINI_API_KEY}"
+            try:
+                response = requests.post(url, json=payload, headers=headers, timeout=12)
+                if response.status_code == 200:
+                    data = response.json()
+                    return data["candidates"][0]["content"]["parts"][0]["text"]
+            except Exception:
+                continue
+
+    return "Señor, no fue posible conectar con los modelos de Gemini. Verifique la validez de su API Key."
 
 async def texto_a_voz(texto: str, ruta_salida: str):
     communicate = edge_tts.Communicate(texto, VOICE)
@@ -178,16 +185,13 @@ async def home():
 
 @app.post("/preguntar")
 async def preguntar(prompt: str = Form(...)):
-    # 1. Consultar a Gemini usando requests en un hilo secundario para no bloquear
     loop = asyncio.get_event_loop()
     texto_respuesta = await loop.run_in_executor(None, consultar_gemini, prompt)
 
-    # 2. Crear archivo temporal de audio seguro
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
     ruta_audio = temp_file.name
     temp_file.close()
 
-    # 3. Convertir a voz
     await texto_a_voz(texto_respuesta, ruta_audio)
     
     return FileResponse(ruta_audio, media_type="audio/mpeg", filename="respuesta_ares.mp3")

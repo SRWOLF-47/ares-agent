@@ -1,7 +1,7 @@
 import os
 import tempfile
 import asyncio
-import httpx
+import requests
 import edge_tts
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, FileResponse
@@ -19,8 +19,11 @@ SYSTEM_INSTRUCTION = (
     "de un asistente personal ejecutivo (estilo JARVIS). Evita emojis o caracteres especiales."
 )
 
-async def consultar_gemini_directo(prompt: str) -> str:
-    """Consulta directa a la API REST de Google Gemini (v1beta) para evitar fallos de SDK."""
+def consultar_gemini(prompt: str) -> str:
+    """Consulta directa a la API oficial de Gemini sin SDKs intermedios."""
+    if not GEMINI_API_KEY:
+        return "Señor, no detecto la clave de acceso API en las variables de entorno de Render."
+
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
     
     payload = {
@@ -36,18 +39,16 @@ async def consultar_gemini_directo(prompt: str) -> str:
     
     headers = {"Content-Type": "application/json"}
 
-    async with httpx.AsyncClient() as client:
-        response = await client.post(url, json=payload, headers=headers, timeout=30.0)
+    try:
+        response = requests.post(url, json=payload, headers=headers, timeout=20)
         
         if response.status_code == 200:
             data = response.json()
-            try:
-                texto = data["candidates"][0]["content"]["parts"][0]["text"]
-                return texto
-            except (KeyError, IndexErroer):
-                return "A su servicio, Señor. Transmisión recibida."
+            return data["candidates"][0]["content"]["parts"][0]["text"]
         else:
-            return f"Señor, ocurrió una anomalía en la conexión con la red: Código {response.status_code}."
+            return f"Señor, la API devolvió el código de estado {response.status_code}. Por favor verifique la clave API en Render."
+    except Exception as e:
+        return f"Señor, ocurrió una anomalía en la conexión: {str(e)}"
 
 async def texto_a_voz(texto: str, ruta_salida: str):
     communicate = edge_tts.Communicate(texto, VOICE)
@@ -177,8 +178,9 @@ async def home():
 
 @app.post("/preguntar")
 async def preguntar(prompt: str = Form(...)):
-    # 1. Obtener la respuesta directa de Gemini mediante HTTP
-    texto_respuesta = await consultar_gemini_directo(prompt)
+    # 1. Consultar a Gemini usando requests en un hilo secundario para no bloquear
+    loop = asyncio.get_event_loop()
+    texto_respuesta = await loop.run_in_executor(None, consultar_gemini, prompt)
 
     # 2. Crear archivo temporal de audio seguro
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")

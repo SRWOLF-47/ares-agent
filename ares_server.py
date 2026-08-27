@@ -5,6 +5,7 @@ import edge_tts
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, FileResponse
 from google import genai
+from google.genai import types
 
 app = FastAPI()
 
@@ -109,13 +110,18 @@ async def home():
 
 @app.post("/preguntar")
 async def preguntar(prompt: str = Form(...)):
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt
-    )
-    
-    texto_respuesta = response.text if response.text else "A su servicio, Señor."
-    
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION
+            )
+        )
+        texto_respuesta = response.text if response.text else "A su servicio, Señor."
+    except Exception as e:
+        texto_respuesta = f"Señor, ocurrió una anomalía en el procesamiento: {str(e)}"
+
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
     ruta_audio = temp_file.name
     temp_file.close()

@@ -2,23 +2,23 @@ import os
 import tempfile
 import asyncio
 import edge_tts
-import google.generativeai as genai
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, FileResponse
+from google import genai
 
 app = FastAPI()
 
-# 1. Configuración de Gemini y API Key
+# Configuración del cliente oficial de Gemini
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
+client = genai.Client(api_key=GEMINI_API_KEY)
 
-# Voz estilo JARVIS (Elegante, formal y ejecutiva)
+# Voz estilo JARVIS
 VOICE = "es-ES-AlvaroNeural"
 
 SYSTEM_INSTRUCTION = """
 Eres ARES (Automated Response & Executive System), un agente de inteligencia artificial personal, extremadamente sofisticado, refinado, leal y eficiente.
 Te diriges al usuario como 'Señor'.
-Tus respuestas deben ser concisas, analíticas, formales y directas. 
+Tus respuestas deben ser concisas, analíticas, formales y directas.
 Mantén un tono de voz digno de un asistente personal ejecutivo (estilo JARVIS).
 Evita emojis o caracteres especiales para garantizar una síntesis de voz perfecta.
 """
@@ -109,12 +109,11 @@ async def home():
 
 @app.post("/preguntar")
 async def preguntar(prompt: str = Form(...)):
-    model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
-        system_instruction=SYSTEM_INSTRUCTION
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt
     )
     
-    response = model.generate_content(prompt)
     texto_respuesta = response.text if response.text else "A su servicio, Señor."
     
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")

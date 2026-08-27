@@ -1,28 +1,53 @@
 import os
 import tempfile
 import asyncio
+import httpx
 import edge_tts
 from fastapi import FastAPI, Form
 from fastapi.responses import HTMLResponse, FileResponse
-from google import genai
-from google.genai import types
 
 app = FastAPI()
 
-# Configuración del cliente oficial de Gemini
+# 1. Configuración de API Key y Voz
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-client = genai.Client(api_key=GEMINI_API_KEY)
-
-# Voz estilo JARVIS
 VOICE = "es-ES-AlvaroNeural"
 
-SYSTEM_INSTRUCTION = """
-Eres ARES (Automated Response & Executive System), un agente de inteligencia artificial personal, extremadamente sofisticado, refinado, leal y eficiente.
-Te diriges al usuario como 'Señor'.
-Tus respuestas deben ser concisas, analíticas, formales y directas.
-Mantén un tono de voz digno de un asistente personal ejecutivo (estilo JARVIS).
-Evita emojis o caracteres especiales para garantizar una síntesis de voz perfecta.
-"""
+SYSTEM_INSTRUCTION = (
+    "Eres ARES (Automated Response & Executive System), un agente de inteligencia artificial personal, "
+    "extremadamente sofisticado, refinado, leal y eficiente. Te diriges al usuario como 'Señor'. "
+    "Tus respuestas deben ser concisas, analíticas, formales y directas. Mantén un tono de voz digno "
+    "de un asistente personal ejecutivo (estilo JARVIS). Evita emojis o caracteres especiales."
+)
+
+async def consultar_gemini_directo(prompt: str) -> str:
+    """Consulta directa a la API REST de Google Gemini (v1beta) para evitar fallos de SDK."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+    
+    payload = {
+        "system_instruction": {
+            "parts": [{"text": SYSTEM_INSTRUCTION}]
+        },
+        "contents": [
+            {
+                "parts": [{"text": prompt}]
+            }
+        ]
+    }
+    
+    headers = {"Content-Type": "application/json"}
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, json=payload, headers=headers, timeout=30.0)
+        
+        if response.status_code == 200:
+            data = response.json()
+            try:
+                texto = data["candidates"][0]["content"]["parts"][0]["text"]
+                return texto
+            except (KeyError, IndexErroer):
+                return "A su servicio, Señor. Transmisión recibida."
+        else:
+            return f"Señor, ocurrió una anomalía en la conexión con la red: Código {response.status_code}."
 
 async def texto_a_voz(texto: str, ruta_salida: str):
     communicate = edge_tts.Communicate(texto, VOICE)
@@ -152,24 +177,15 @@ async def home():
 
 @app.post("/preguntar")
 async def preguntar(prompt: str = Form(...)):
-    try:
-        # Uso asíncrono directo con gemini-1.5-flash
-        response = await client.aio.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_INSTRUCTION
-            )
-        )
-        texto_respuesta = response.text if response.text else "A su servicio, Señor."
-    except Exception as e:
-        texto_respuesta = f"Señor, ocurrió una anomalía en el procesamiento: {str(e)}"
+    # 1. Obtener la respuesta directa de Gemini mediante HTTP
+    texto_respuesta = await consultar_gemini_directo(prompt)
 
+    # 2. Crear archivo temporal de audio seguro
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
     ruta_audio = temp_file.name
     temp_file.close()
 
+    # 3. Convertir a voz
     await texto_a_voz(texto_respuesta, ruta_audio)
     
     return FileResponse(ruta_audio, media_type="audio/mpeg", filename="respuesta_ares.mp3")
-    

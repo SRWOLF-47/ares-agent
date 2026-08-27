@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, FileResponse
 
 app = FastAPI()
 
-# 1. Configuración de Gemini
+# 1. Configuración de Gemini y API Key
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 
@@ -24,8 +24,7 @@ Evita emojis o caracteres especiales para garantizar una síntesis de voz perfec
 """
 
 async def texto_a_voz(texto: str, ruta_salida: str):
-    # Ajustamos ligeramente la velocidad para darle más elegancia al hablar
-    communicate = edge_tts.Communicate(texto, VOICE, rate="-5%")
+    communicate = edge_tts.Communicate(texto, VOICE)
     await communicate.save(ruta_salida)
 
 @app.get("/", response_class=HTMLResponse)

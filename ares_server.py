@@ -1,4 +1,5 @@
 import os
+import tempfile
 import asyncio
 import edge_tts
 from fastapi import FastAPI, Form
@@ -19,9 +20,9 @@ Te diriges al usuario como 'Señor'.
 Tus respuestas deben ser concisas, analíticas, formales y directas. Evita emojis o símbolos raros para mejorar la lectura de voz.
 """
 
-async def texto_a_voz(texto: str, archivo_salida: str = "respuesta_ares.mp3"):
+async def texto_a_voz(texto: str, ruta_salida: str):
     communicate = edge_tts.Communicate(texto, VOICE)
-    await communicate.save(archivo_salida)
+    await communicate.save(ruta_salida)
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
@@ -35,10 +36,9 @@ async def home():
         <style>
             body { font-family: Arial, sans-serif; background-color: #0d1117; color: #c9d1d9; text-align: center; padding: 20px; }
             h1 { color: #58a6ff; }
-            textarea { width: 80%; height: 100px; background: #161b22; color: #fff; border: 1px solid #30363d; border-radius: 8px; padding: 10px; }
-            button { background: #238636; color: white; border: none; padding: 10px 20px; margin-top: 10px; border-radius: 6px; cursor: pointer; font-size: 16px; }
+            textarea { width: 90%; max-width: 500px; height: 100px; background: #161b22; color: #fff; border: 1px solid #30363d; border-radius: 8px; padding: 10px; font-size: 16px; }
+            button { background: #238636; color: white; border: none; padding: 12px 24px; margin-top: 10px; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: bold; }
             button:hover { background: #2ea043; }
-            audio { margin-top: 20px; width: 80%; }
         </style>
     </head>
     <body>
@@ -54,9 +54,9 @@ async def home():
 
 @app.post("/preguntar")
 async def preguntar(prompt: str = Form(...)):
-    # Llamada a Gemini con la herramienta de búsqueda en tiempo real activada
+    # Usamos modelo oficial de producción de Gemini
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-1.5-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
             system_instruction=SYSTEM_INSTRUCTION,
@@ -64,11 +64,14 @@ async def preguntar(prompt: str = Form(...)):
         )
     )
     
-    texto_respuesta = response.text
-    archivo_audio = "respuesta_ares.mp3"
+    texto_respuesta = response.text if response.text else "Entendido, Señor."
     
+    # Crear archivo temporal seguro para el servidor en la nube
+    temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    ruta_audio = temp_file.name
+    temp_file.close()
+
     # Generar audio
-    await texto_a_voz(texto_respuesta, archivo_audio)
+    await texto_a_voz(texto_respuesta, ruta_audio)
     
-    return FileResponse(archivo_audio, media_type="audio/mpeg", filename=archivo_audio)
-    
+    return FileResponse(ruta_audio, media_type="audio/mpeg", filename="respuesta_ares.mp3")

@@ -3,7 +3,6 @@ import tempfile
 import asyncio
 import logging
 import sqlite3
-import json
 from datetime import datetime
 from pathlib import Path
 from contextlib import contextmanager
@@ -16,7 +15,7 @@ import edge_tts
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ARES-v4")
 
-app = FastAPI(title="ARES v4 - Memory")
+app = FastAPI(title="ARES v4 - Memory + Wake Word")
 
 app.add_middleware(
     CORSMiddleware,
@@ -28,7 +27,7 @@ app.add_middleware(
 # ====================== CONFIG ======================
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 VOICE = "es-MX-JorgeNeural"
-DB_PATH = "ares_memory.db"          # Se crea automáticamente
+DB_PATH = "ares_memory.db"
 
 SYSTEM_BASE = (
     "Eres ARES, un asistente ejecutivo de inteligencia artificial de élite. "
@@ -67,12 +66,6 @@ def init_db():
                 created_at TEXT NOT NULL
             )
         """)
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS profile (
-                key TEXT PRIMARY KEY,
-                value TEXT NOT NULL
-            )
-        """)
         conn.commit()
 
 @contextmanager
@@ -92,13 +85,12 @@ def save_message(role: str, content: str):
             (role, content, datetime.utcnow().isoformat())
         )
 
-def get_recent_messages(limit: int = 8) -> list[dict]:
+def get_recent_messages(limit: int = 8):
     with get_db() as conn:
         rows = conn.execute(
             "SELECT role, content FROM messages ORDER BY id DESC LIMIT ?",
             (limit,)
         ).fetchall()
-    # Devolver en orden cronológico
     return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
 
 def save_fact(fact: str, category: str = "general"):
@@ -111,10 +103,10 @@ def save_fact(fact: str, category: str = "general"):
                 "INSERT OR IGNORE INTO facts (fact, category, created_at) VALUES (?, ?, ?)",
                 (fact, category, datetime.utcnow().isoformat())
             )
-        except Exception:
+        except:
             pass
 
-def get_all_facts(limit: int = 25) -> list[str]:
+def get_all_facts(limit: int = 25):
     with get_db() as conn:
         rows = conn.execute(
             "SELECT fact FROM facts ORDER BY id DESC LIMIT ?",
@@ -123,39 +115,30 @@ def get_all_facts(limit: int = 25) -> list[str]:
     return [r["fact"] for r in rows]
 
 def build_memory_context() -> str:
-    """Construye el bloque de memoria que se inyecta al prompt."""
     facts = get_all_facts(20)
     recent = get_recent_messages(6)
-
     parts = []
-
     if facts:
         parts.append("### Hechos importantes que conoces sobre el usuario:")
         for f in facts:
             parts.append(f"- {f}")
-
     if recent:
         parts.append("\n### Conversación reciente:")
         for msg in recent:
             role = "Usuario" if msg["role"] == "user" else "ARES"
             parts.append(f"{role}: {msg['content']}")
-
     return "\n".join(parts) if parts else ""
 
-
 def extract_and_save_facts(user_text: str, ares_text: str):
-    """Pide a Gemini que extraiga hechos nuevos sobre el usuario."""
     if not GEMINI_API_KEY:
         return
-
     extraction_prompt = f"""
-Analiza esta conversación y extrae SOLO hechos claros y útiles sobre el usuario (preferencias, proyectos, nombre, gustos, datos personales, estilo de comunicación, etc.).
-Devuelve únicamente una lista de hechos, uno por línea. Si no hay hechos nuevos relevantes, devuelve la palabra NADA.
+Analiza esta conversación y extrae SOLO hechos claros y útiles sobre el usuario.
+Devuelve únicamente una lista de hechos, uno por línea. Si no hay hechos nuevos, devuelve la palabra NADA.
 
 Usuario: {user_text}
 ARES: {ares_text}
 """
-
     try:
         headers = {"Content-Type": "application/json"}
         payload = {
@@ -173,7 +156,6 @@ ARES: {ares_text}
                         save_fact(line)
     except Exception as e:
         logger.warning(f"Error extrayendo hechos: {e}")
-
 
 # ====================================================
 #                 GEMINI + TTS
@@ -211,7 +193,6 @@ def consultar_gemini(prompt: str) -> str:
 
     return "Señor, no pude conectar con los modelos de Gemini."
 
-
 async def texto_a_voz(texto: str, ruta: str) -> bool:
     try:
         communicate = edge_tts.Communicate(texto, VOICE, rate="-8%", pitch="-3Hz")
@@ -221,7 +202,6 @@ async def texto_a_voz(texto: str, ruta: str) -> bool:
         logger.error(f"TTS error: {e}")
         return False
 
-
 # ====================================================
 #                     RUTAS
 # ====================================================
@@ -229,70 +209,180 @@ async def texto_a_voz(texto: str, ruta: str) -> bool:
 @app.on_event("startup")
 def startup():
     init_db()
-    logger.info("Memoria ARES inicializada")
-
+    logger.info("ARES v4 con memoria iniciado")
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
-    # Reutilizamos la misma interfaz visual de v3.1 (bolita + wake word)
-    # Por brevedad aquí dejo la llamada; el HTML completo es el de la versión anterior
-    # (puedes copiar el HTML de la v3.1 que te di antes)
-    return HTMLResponse(content=open("index.html").read() if Path("index.html").exists() else "Interfaz no encontrada. Usa el HTML de la v3.1")
+    return """
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <title>ARES v4</title>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background: #05050a;
+            color: #e0d4ff;
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            user-select: none;
+        }
+        .title {
+            position: absolute;
+            top: 36px;
+            letter-spacing: 8px;
+            font-size: 13px;
+            color: #9b7bff;
+            opacity: 0.7;
+        }
+        .orb-container {
+            position: relative;
+            width: 240px;
+            height: 240px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+        }
+        .orb {
+            width: 120px;
+            height: 120px;
+            border-radius: 50%;
+            background: radial-gradient(circle at 35% 35%,
+                #d4a5ff 0%, #9b4dff 35%, #5c1db8 70%, #2a0a5e 100%);
+            box-shadow: 0 0 40px rgba(155, 77, 255, 0.55),
+                        0 0 80px rgba(120, 40, 220, 0.3),
+                        inset 0 0 30px rgba(255,255,255,0.12);
+            position: relative;
+            z-index: 10;
+            transition: all 0.3s ease;
+        }
+        .ring {
+            position: absolute;
+            border-radius: 50%;
+            border: 2px solid rgba(180, 100, 255, 0.35);
+            opacity: 0;
+        }
+        .ring1 { width: 150px; height: 150px; }
+        .ring2 { width: 190px; height: 190px; }
+        .ring3 { width: 230px; height: 230px; }
 
+        .idle .orb { animation: breathe 3.8s ease-in-out infinite; }
+        .wake .orb {
+            animation: pulse-wake 1.3s ease-in-out infinite;
+            box-shadow: 0 0 55px rgba(180, 90, 255, 0.85), 0 0 110px rgba(140, 50, 255, 0.45);
+        }
+        .listening .orb {
+            animation: pulse-listen 1.0s ease-in-out infinite;
+            box-shadow: 0 0 70px rgba(200, 100, 255, 0.95), 0 0 130px rgba(160, 60, 255, 0.55);
+        }
+        .listening .ring { animation: expand 1.3s ease-out infinite; }
+        .listening .ring2 { animation-delay: 0.22s; }
+        .listening .ring3 { animation-delay: 0.44s; }
+        .thinking .orb { animation: spin-glow 1.7s linear infinite; }
+        .speaking .orb {
+            animation: speak-pulse 0.65s ease-in-out infinite;
+            box-shadow: 0 0 75px rgba(210, 130, 255, 1), 0 0 150px rgba(170, 70, 255, 0.65);
+        }
 
-@app.post("/preguntar")
-async def preguntar(prompt: str = Form(...)):
-    if not prompt.strip():
-        raise HTTPException(400, detail="Vacío")
+        @keyframes breathe {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+        }
+        @keyframes pulse-wake {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.08); }
+        }
+        @keyframes pulse-listen {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.13); }
+        }
+        @keyframes expand {
+            0% { transform: scale(0.65); opacity: 0.65; }
+            100% { transform: scale(1.45); opacity: 0; }
+        }
+        @keyframes spin-glow {
+            0% { transform: rotate(0deg) scale(1); }
+            50% { transform: rotate(180deg) scale(1.07); }
+            100% { transform: rotate(360deg) scale(1); }
+        }
+        @keyframes speak-pulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.14); }
+        }
 
-    # 1. Guardar mensaje del usuario
-    save_message("user", prompt)
+        .status {
+            margin-top: 48px;
+            font-size: 15px;
+            color: #b89cff;
+            letter-spacing: 0.8px;
+            min-height: 24px;
+            text-align: center;
+            opacity: 0.9;
+            max-width: 320px;
+            line-height: 1.4;
+        }
+        .hint {
+            position: absolute;
+            bottom: 36px;
+            font-size: 12.5px;
+            color: #6b5b9a;
+            text-align: center;
+            max-width: 300px;
+            line-height: 1.45;
+        }
+        audio { display: none; }
+    </style>
+</head>
+<body>
+    <div class="title">A R E S &nbsp; v 4</div>
 
-    # 2. Generar respuesta con memoria
-    loop = asyncio.get_event_loop()
-    texto = await loop.run_in_executor(None, consultar_gemini, prompt)
+    <div class="orb-container idle" id="orbContainer">
+        <div class="ring ring1"></div>
+        <div class="ring ring2"></div>
+        <div class="ring ring3"></div>
+        <div class="orb" id="orb"></div>
+    </div>
 
-    # 3. Guardar respuesta de ARES
-    save_message("assistant", texto)
+    <div class="status" id="status">Di "Hey Ares" o "Oye Ares"</div>
+    <div class="hint">
+        Activa el micrófono la primera vez.<br>
+        Palabras clave: Hey Ares · Oye Ares · Ok Ares · Ares
+    </div>
 
-    # 4. Extraer hechos nuevos (en segundo plano ligero)
-    try:
-        extract_and_save_facts(prompt, texto)
-    except Exception:
-        pass
+    <audio id="player"></audio>
 
-    # 5. Generar audio
-    temp_path = None
-    try:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
-            temp_path = tmp.name
+    <script>
+        const orbContainer = document.getElementById('orbContainer');
+        const statusEl = document.getElementById('status');
+        const player = document.getElementById('player');
 
-        ok = await texto_a_voz(texto, temp_path)
+        const WAKE_PHRASES = [
+            "hey ares", "oye ares", "ok ares", "okay ares",
+            "hola ares", "ares", "ei ares", "ey ares"
+        ];
 
-        if ok and Path(temp_path).stat().st_size > 800:
-            return FileResponse(temp_path, media_type="audio/mpeg", filename="ares.mp3")
-        else:
-            return JSONResponse({"texto": texto, "error": "TTS falló"})
-    except Exception as e:
-        logger.error(e)
-        return JSONResponse({"texto": texto, "error": str(e)})
+        let recognition = null;
+        let mode = "wake";
+        let isProcessing = false;
+        let restartTimeout = null;
 
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
 
-@app.get("/memory")
-async def ver_memoria():
-    """Endpoint de diagnóstico para ver qué recuerda ARES"""
-    return {
-        "hechos": get_all_facts(30),
-        "ultimos_mensajes": get_recent_messages(10)
-    }
+        if (!SpeechRecognition) {
+            statusEl.textContent = "Tu navegador no soporta reconocimiento de voz. Usa Chrome o Edge.";
+        } else {
+            initRecognition();
+            startWakeListening();
+        }
 
-
-@app.get("/health")
-async def health():
-    return {
-        "status": "ok",
-        "version": "v4-memory",
-        "voice": VOICE,
-        "api_key": bool(GEMINI_API_KEY),
-        "memory_db": DB_PATH
-    }
+        function initRecognition() {
+            recognition = new SpeechRecognition();
+            recognition.lang = "es-MX

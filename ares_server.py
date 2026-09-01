@@ -213,7 +213,7 @@ def startup():
 
 @app.get("/", response_class=HTMLResponse)
 async def home():
-    return """
+    html = '''
 <!DOCTYPE html>
 <html lang="es">
 <head>
@@ -262,7 +262,6 @@ async def home():
                         inset 0 0 30px rgba(255,255,255,0.12);
             position: relative;
             z-index: 10;
-            transition: all 0.3s ease;
         }
         .ring {
             position: absolute;
@@ -385,4 +384,136 @@ async def home():
 
         function initRecognition() {
             recognition = new SpeechRecognition();
-            recognition.lang = "es-MX
+            recognition.lang = "es-MX";
+            recognition.continuous = true;
+            recognition.interimResults = true;
+            recognition.maxAlternatives = 1;
+
+            recognition.onresult = (event) => {
+                let transcript = "";
+                for (let i = event.resultIndex; i < event.results.length; i++) {
+                    transcript += event.results[i][0].transcript;
+                }
+                transcript = transcript.toLowerCase().trim();
+
+                if (mode === "wake") {
+                    const detected = WAKE_PHRASES.some(phrase => transcript.includes(phrase));
+                    if (detected) {
+                        onWakeWord();
+                    }
+                } else if (mode === "command") {
+                    if (event.results[event.results.length - 1].isFinal) {
+                        const finalText = event.results[event.results.length - 1][0].transcript.trim();
+                        if (finalText.length > 1) {
+                            recognition.stop();
+                            processCommand(finalText);
+                        }
+                    }
+                }
+            };
+
+            recognition.onerror = (e) => {
+                if (e.error === "not-allowed") {
+                    statusEl.textContent = "Permiso de micrófono denegado";
+                    return;
+                }
+                scheduleRestart();
+            };
+
+            recognition.onend = () => {
+                if (!isProcessing) scheduleRestart();
+            };
+        }
+
+        function scheduleRestart() {
+            clearTimeout(restartTimeout);
+            restartTimeout = setTimeout(() => {
+                if (!isProcessing && mode === "wake") {
+                    startWakeListening();
+                }
+            }, 350);
+        }
+
+        function startWakeListening() {
+            mode = "wake";
+            setState("idle");
+            statusEl.textContent = 'Di "Hey Ares" o "Oye Ares"';
+            try { recognition.start(); } catch (e) {}
+        }
+
+        function onWakeWord() {
+            mode = "command";
+            recognition.stop();
+            setState("wake");
+            statusEl.textContent = "Sí, Señor...";
+
+            setTimeout(() => {
+                setState("listening");
+                statusEl.textContent = "Te escucho...";
+                recognition.continuous = false;
+                recognition.interimResults = false;
+                try { recognition.start(); } catch (e) {}
+            }, 600);
+        }
+
+        async function processCommand(texto) {
+            isProcessing = true;
+            setState("thinking");
+            statusEl.textContent = '"' + texto + '"';
+
+            recognition.continuous = true;
+            recognition.interimResults = true;
+
+            try {
+                const formData = new FormData();
+                formData.append("prompt", texto);
+
+                const response = await fetch("/preguntar", {
+                    method: "POST",
+                    body: formData
+                });
+
+                if (!response.ok) throw new Error("Error servidor");
+
+                const contentType = response.headers.get("content-type") || "";
+
+                if (contentType.includes("audio")) {
+                    const blob = await response.blob();
+                    const url = URL.createObjectURL(blob);
+                    player.src = url;
+                    setState("speaking");
+                    statusEl.textContent = "ARES respondiendo...";
+
+                    player.onended = () => {
+                        URL.revokeObjectURL(url);
+                        isProcessing = false;
+                        startWakeListening();
+                    };
+                    await player.play();
+                } else {
+                    const data = await response.json();
+                    statusEl.textContent = data.texto || "Sin audio";
+                    isProcessing = false;
+                    startWakeListening();
+                }
+            } catch (err) {
+                console.error(err);
+                statusEl.textContent = "Error de conexión";
+                isProcessing = false;
+                startWakeListening();
+            }
+        }
+
+        function setState(state) {
+            orbContainer.className = "orb-container " + state;
+        }
+
+        orbContainer.addEventListener("click", () => {
+            if (isProcessing) return;
+            if (mode === "wake") onWakeWord();
+        });
+    </script>
+</body>
+</html>
+'''
+    return HTMLResponse(content=html)
